@@ -1,0 +1,388 @@
+import axios from 'axios'
+import { PluginPosition, Row } from 'gridjs'
+import { _ } from 'gridjs-react'
+import { RowSelection } from 'gridjs/plugins/selection'
+import moment from 'moment'
+import type { NextPage, GetServerSideProps } from 'next'
+import Head from 'next/head'
+import { useMemo, useRef, useState } from 'react'
+import { Range } from 'react-date-range'
+import {
+	IoLogoWhatsapp,
+	IoIosAddCircleOutline,
+	IoMdClose,
+} from 'react-icons/io'
+import Select from 'react-select'
+import { useTheme } from 'styled-components'
+
+import compareStrings from '@/utils/compareStrings'
+import getStatusClassName from '@/utils/getStatusClassName'
+import DateRangeInput from '@components/DateRangeInput'
+import Modal, { ModalRef } from '@components/Modal'
+import Table from '@components/Table'
+import Timeline from '@components/Timeline'
+import api from '@services/api'
+import {
+	Container,
+	Main,
+	ModalContent,
+	DateInputs,
+	SelectInput,
+	Button,
+	TableActions,
+} from '@styles/pages/Queue'
+
+const options = [
+	{ value: 0, label: 'Sem aplicativo.' },
+	{ value: 1, label: 'Pensando' },
+	{ value: 2, label: 'Não responde' },
+	{ value: 3, label: 'Venda concluída' },
+	{ value: 4, label: 'Sem saldo ' },
+]
+
+moment.locale('pt-br')
+
+const Queue: NextPage<GlobalInterfaces.QueueDataProps> = (props) => {
+	const [data, setData] = useState<GlobalInterfaces.DistributionData[]>(
+		props.data
+	)
+	const { colors } = useTheme()
+	const modalRef = useRef<ModalRef>()
+
+	const [modalData, setModalData] =
+		useState<GlobalInterfaces.DistributionData>()
+
+	const [datePicker, setDatePicker] = useState<Range[]>([
+		{
+			startDate: new Date(),
+			endDate: undefined,
+			key: 'selection',
+		},
+	])
+	const [inputFilter, setInputFilter] = useState<string>()
+	// const [statusFilter, setStatusFilter] = useState<string>()
+
+	const sellers = useMemo(
+		() => Array.from(new Set(data?.map((d) => d.seller))),
+		[data]
+	)
+
+	const tableData = useMemo(
+		() =>
+			data.filter((value) => {
+				let cond = true
+
+				if (inputFilter)
+					cond =
+						cond &&
+						(compareStrings(value.seller, inputFilter, true) ||
+							compareStrings(value.client.name, inputFilter, true) ||
+							compareStrings(
+								value.client.phone,
+								inputFilter,
+								true,
+								/[.\-() ]+/g
+							))
+				// if (statusFilter !== undefined && statusFilter >= 0)
+				// 	cond = cond && statusFilter === value.client.status
+				if (datePicker && datePicker[0].startDate && datePicker[0].endDate) {
+					const registrationDate = moment(value.registrationDate)
+
+					cond =
+						cond &&
+						registrationDate.isSameOrAfter(datePicker[0].startDate) &&
+						registrationDate.isSameOrBefore(datePicker[0].endDate)
+				}
+
+				return cond
+			}),
+		[data, inputFilter, datePicker]
+	)
+
+	const onRowClick = async (id: number) => {
+		try {
+			const { data } = await api.get(`/api/queue/${id}`)
+
+			setModalData(data)
+			modalRef.current?.open()
+		} catch (error) {
+			console.error(error)
+		}
+	}
+
+	const tableConfig: GlobalInterfaces.TableProps<GlobalInterfaces.DistributionData> =
+		{
+			columns: [
+				{
+					id: 'select',
+					name: 'Selecionar',
+					plugin: {
+						id: 'select',
+						position: PluginPosition.Cell,
+						component: RowSelection,
+						props: {
+							id: (row: Row) => row.cell(1).data,
+						},
+					},
+				},
+				{
+					name: 'ID',
+					data: (row) => row.id,
+				},
+				{
+					name: 'Nome do cliente',
+					data: (row) => row.client.name,
+				},
+				{
+					name: 'Cadastrado em',
+					data: (row) => moment(row.registrationDate).format('L'),
+				},
+				{
+					name: 'Produto',
+					id: 'product',
+				},
+				{
+					name: 'Vendedor',
+					id: 'seller',
+				},
+				{
+					name: 'Status do cliente',
+					data: (row) => row.client.status,
+					formatter: (cell) =>
+						_(<div className={getStatusClassName(cell as string)}>{cell}</div>),
+				},
+				{
+					name: 'Ações',
+					formatter: (_cell, row) => {
+						return _(
+							<TableActions>
+								<a
+									href="https://web.whatsapp.com"
+									target="_blank"
+									rel="noreferrer"
+								>
+									<IoLogoWhatsapp
+										className="wpp"
+										color={'#08913F'}
+										size="28px"
+									/>
+								</a>
+								<IoIosAddCircleOutline
+									color={colors.tertiary}
+									size="28px"
+									onClick={() => onRowClick(Number(row.cell(1).data))}
+									className="see-more"
+								/>
+							</TableActions>
+						)
+					},
+				},
+			],
+		}
+
+	const onModalClose = () => {
+		modalRef.current?.close()
+		const index = data.findIndex((value) => value.id === modalData?.id)
+
+		if (index >= 0) {
+			setData((oldData) => {
+				oldData[index] = modalData as GlobalInterfaces.DistributionData
+
+				return oldData
+			})
+		}
+	}
+
+	return (
+		<Container>
+			<Head>
+				<title>CredFácil - Distribuição Fila</title>
+				<meta name="description" content="Generated by create next app" />
+				<link rel="icon" href="/favicon.ico" />
+			</Head>
+
+			{/* <Header /> */}
+
+			<Main>
+				<Modal ref={modalRef}>
+					{modalData && (
+						<ModalContent>
+							<a onClick={() => onModalClose()} id="close-btn">
+								<IoMdClose color="#FFF" />
+							</a>
+							<section className="datas-container">
+								<div>
+									<h1>Dados do cliente</h1>
+									<div className="data">
+										<span>Nome: </span>
+										{modalData?.client.name}
+									</div>
+									<div className="data right">
+										<span>Nascimento: </span>
+										{moment(modalData?.client.birthday).format('L')}
+									</div>
+									<div className="data">
+										<span>CPF: </span>
+										{modalData?.client.cpf}
+									</div>
+									<div className="data right">
+										<span>Telefone: </span>
+										{modalData?.client.phone}
+									</div>
+									<div className="data">
+										<span>RG: </span>
+										{modalData?.client.rg}
+									</div>
+								</div>
+								<div>
+									<h1>Dados da proposta</h1>
+									<div className="data">
+										<span>Produto: </span>
+										{modalData?.product}
+									</div>
+									<div className="data right">
+										<span>Data da proposta: </span>
+										{moment(modalData?.registrationDate).format('L')}
+									</div>
+									<div className="data">
+										<span>Valor: </span>
+										R$ 1000,00
+									</div>
+									<div className="data right">
+										<span>Vendedor:</span>
+										<Select
+											instanceId="select-seller-modal"
+											className="select-vendedor"
+											options={sellers?.map((s) => ({ value: s, label: s }))}
+											defaultValue={{
+												value: modalData.seller,
+												label: modalData.seller,
+											}}
+										/>
+									</div>
+									<div className="data">
+										<a
+											href="https://www.c6bank.com.br/"
+											target="_blank"
+											rel="noreferrer"
+										>
+											Abrir com C6
+										</a>
+									</div>
+									<div className="data right">
+										<a
+											href="https://www.safra.com.br/"
+											target="_blank"
+											rel="noreferrer"
+										>
+											Abrir com Safra
+										</a>
+									</div>
+								</div>
+							</section>
+
+							<fieldset className="history">
+								<legend>Histórico de proposta</legend>
+								<Timeline
+									contents={modalData?.client.proposeHistory?.map((value) => ({
+										title: value.event,
+										date: new Date(value.createdAt),
+									}))}
+								/>
+							</fieldset>
+
+							<fieldset className="history">
+								<legend>Histórico de contato</legend>
+								<Timeline
+									contents={modalData?.client.contactHistory?.map((value) => ({
+										title: value.event,
+										date: new Date(value.createdAt),
+									}))}
+								/>
+							</fieldset>
+
+							<div className="footer-buttons">
+								<a
+									href="https://web.whatsapp.com/"
+									target="_blank"
+									rel="noreferrer"
+									id="wpp-btn"
+								>
+									<IoLogoWhatsapp color={'#08913F'} size="28px" />
+								</a>
+								<Button
+									className="btn-color"
+									pointer
+									onClick={() => onModalClose()}
+								>
+									Salvar
+								</Button>
+								<Button pointer onClick={() => onModalClose()}>
+									Fechar
+								</Button>
+							</div>
+						</ModalContent>
+					)}
+				</Modal>
+				<Table
+					data={tableData}
+					headerDirection="row"
+					headerComponent={
+						<>
+							<SelectInput>
+								<Select
+									instanceId="select-status"
+									className="react-select-container"
+									placeholder="Status..."
+									onChange={
+										(newValue) => newValue // && setStatusFilter(newValue.value)
+									}
+									classNamePrefix="react-select"
+									options={options}
+								/>
+							</SelectInput>
+							<DateInputs>
+								<DateRangeInput
+									onChange={(ranges) => setDatePicker([ranges.selection])}
+									onClear={(resetedRanges) => setDatePicker(resetedRanges)}
+									ranges={datePicker}
+									icon="before"
+								/>
+							</DateInputs>
+						</>
+					}
+					searchEnabled
+					selectOptions={sellers?.map((s) => ({ label: s, value: s }))}
+					onSearchChange={(value) => setInputFilter(value)}
+					{...tableConfig}
+				/>
+			</Main>
+		</Container>
+	)
+}
+
+export const getServerSideProps: GetServerSideProps = async () => {
+	try {
+		const { data } = await api.get<GlobalInterfaces.QueueDataProps>(
+			'/api/queue-data'
+		)
+
+		return {
+			props: {
+				data,
+			},
+		}
+	} catch (error) {
+		if (axios.isAxiosError(error)) {
+			return {
+				props: error.response?.data ?? {},
+			}
+		}
+
+		return {
+			props: {},
+		}
+	}
+}
+
+export default Queue

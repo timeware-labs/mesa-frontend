@@ -1,0 +1,452 @@
+import { _ } from 'gridjs-react'
+import type { GetServerSideProps, NextPage } from 'next'
+import dynamic from 'next/dynamic'
+import Head from 'next/head'
+import { FormEvent, useState } from 'react'
+import { DateRange, Range } from 'react-date-range'
+import { IoCalendarClearOutline } from 'react-icons/io5'
+import { MdSegment } from 'react-icons/md'
+import Select from 'react-select'
+import makeAnimated from 'react-select/animated'
+import Swal from 'sweetalert2'
+
+import api from '@/services/api'
+import FavoriteIcon from '@assets/favorite-chart.svg'
+import MoreIcon from '@assets/more.svg'
+import DonutChart from '@components/DonutChart'
+import Filter from '@components/Filter'
+import Input from '@components/Input'
+import Rank from '@components/Rank'
+import Table from '@components/Table'
+import { Temporal } from '@js-temporal/polyfill'
+import {
+	Container,
+	Main,
+	FiltersContainer,
+	Status,
+	DateButton,
+} from '@styles/pages/Home'
+
+const Chart = dynamic(() => import('react-apexcharts'), { ssr: false })
+
+const products = [
+	{ value: 'fgts', label: 'FGTS' },
+	{ value: 'inss', label: 'INSS' },
+]
+
+const objectives = [
+	{ value: 'daily', label: 'Diário' },
+	{ value: 'weekly', label: 'Semanal' },
+	{ value: 'monthly', label: 'Mensal' },
+	{ value: 'annualy', label: 'Anual' },
+]
+
+const animatedComponents = makeAnimated()
+
+interface Props {
+	data: GlobalInterfaces.MetaDataProps
+	type?: string
+}
+
+const Home: NextPage<Props> = (props) => {
+	const now = new Date()
+
+	const [data, setData] = useState<GlobalInterfaces.MetaDataProps>(props.data)
+	const [date, setDate] = useState<Range[]>([
+		{
+			startDate: new Date(now.setMonth(now.getMonth() - 3)),
+			endDate: new Date(),
+			key: 'selection',
+		},
+	])
+
+	const [dateRangeOpen, setDateRangeOpen] = useState(false)
+
+	const donutSeries = data?.tableData?.reduce(
+		(prev, curr) => {
+			prev[0] += curr.totalValue
+			prev[1] += curr.goal
+
+			return prev
+		},
+		[0, 0]
+	)
+
+	const tableConfig: GlobalInterfaces.TableProps<GlobalInterfaces.SellersData> =
+		{
+			columns: [
+				{
+					name: 'Nome',
+					id: 'name',
+				},
+				{
+					name: 'Meta',
+					data: (row) =>
+						Intl.NumberFormat('pt-BR', {
+							currency: 'BRL',
+							style: 'currency',
+						}).format(row.goal),
+				},
+				{
+					name: 'Valor vendido',
+					data: (row) =>
+						Intl.NumberFormat('pt-BR', {
+							currency: 'BRL',
+							style: 'currency',
+						}).format(row.totalValue),
+				},
+				{
+					name: 'Número de vendas',
+					data: (row) => row.totalSelled,
+				},
+				{
+					name: '% Realizado',
+					id: 'percentage',
+					formatter: (cell) =>
+						_(
+							<Status status={Number(cell) >= 100 ? 'positive' : 'negative'}>
+								{Number(cell).toFixed(2)}%
+							</Status>
+						),
+				},
+				{
+					name: 'Receita',
+					id: 'revenue',
+					data: (row) =>
+						Intl.NumberFormat('pt-BR', {
+							currency: 'BRL',
+							style: 'currency',
+						}).format(row.totalValue),
+					hidden: props.type === 'vendedor' ? true : false,
+				},
+				{
+					name: 'Diferença de meta',
+					data: (row) =>
+						Intl.NumberFormat('pt-BR', {
+							currency: 'BRL',
+							style: 'currency',
+						}).format(row.difference),
+					formatter: (cell, row) =>
+						_(
+							<Status
+								status={
+									Number(row.cell(4).data?.toString()) >= 100
+										? 'positive'
+										: 'negative'
+								}
+							>
+								{cell}
+							</Status>
+						),
+				},
+				{
+					name: 'Mais',
+					formatter: () => {
+						return _(<MoreIcon />)
+					},
+				},
+			],
+		}
+
+	async function onFilterSubmit(e: FormEvent) {
+		e.preventDefault()
+		const filteredDate = date[0]
+
+		if (!filteredDate.endDate || !filteredDate.startDate) {
+			Swal.fire({
+				icon: 'error',
+				title: 'Intervalo de data',
+				text: 'O intervalo de data não pode ser vazio!',
+			})
+
+			return console.log('Error')
+		}
+
+		const timeDiff = Math.abs(
+			filteredDate.endDate.getTime() - filteredDate.startDate.getTime()
+		)
+		const diffDays = Math.ceil(timeDiff / (1000 * 3600 * 24))
+		const diffMoths = diffDays / 30
+
+		if (Number(diffMoths.toFixed(0)) > 3) {
+			Swal.fire({
+				icon: 'error',
+				title: 'Data maior que 3 meses',
+				text: 'O intervalo de data, tem que ser inferior ou igual a 3 meses.',
+			})
+
+			return console.log('Error')
+		}
+
+		try {
+			const { data } = await api.get<GlobalInterfaces.MetaDataProps>(
+				'/api/meta-data',
+				{
+					params: {
+						type: props.type,
+						startDate: filteredDate.startDate,
+						endDate: filteredDate.endDate,
+					},
+				}
+			)
+
+			setData(data)
+		} catch (error) {
+			Swal.fire({
+				icon: 'error',
+				title: 'Oops...',
+				text: 'Houve um erro inesperado, contate o suporte!',
+			})
+		}
+	}
+
+	return (
+		<Container>
+			<Head>
+				<title>CredFácil - Distribuição Fila</title>
+				<meta name="description" content="Generated by create next app" />
+				<link rel="icon" href="/favicon.ico" />
+			</Head>
+
+			{/* <Header /> */}
+
+			<Main>
+				<FiltersContainer>
+					<Filter onFilterSubmit={onFilterSubmit}>
+						<Input label="Produtos">
+							<Select
+								isMulti
+								components={animatedComponents}
+								name="products"
+								placeholder="Selecione um produto..."
+								options={products}
+							/>
+						</Input>
+						<Input label="Tipo de metas">
+							<Select
+								isMulti
+								components={animatedComponents}
+								placeholder="Selecione um tipo de meta..."
+								name="objectives"
+								options={objectives}
+							/>
+						</Input>
+
+						<Input label="Data">
+							<DateButton>
+								<button
+									type="button"
+									onClick={() => setDateRangeOpen(!dateRangeOpen)}
+								>
+									<IoCalendarClearOutline />
+									<span>
+										{date[0].startDate
+											? Temporal.PlainDate.from(
+													date[0].startDate.toISOString().replace('Z', '')
+											  ).toLocaleString('pt-BR', {
+													dateStyle: 'short',
+											  })
+											: 'Data inicial'}
+									</span>
+								</button>
+								<div className="line" />
+								<button
+									type="button"
+									onClick={() => setDateRangeOpen(!dateRangeOpen)}
+								>
+									<span>
+										{date[0].endDate
+											? Temporal.PlainDate.from(
+													date[0].endDate.toISOString().replace('Z', '')
+											  ).toLocaleString('pt-BR', {
+													dateStyle: 'short',
+											  })
+											: 'Data final'}
+									</span>
+								</button>
+								{dateRangeOpen && (
+									<>
+										<div
+											className="overflow"
+											onClick={() => setDateRangeOpen(!dateRangeOpen)}
+										/>
+										<DateRange
+											classNames={{
+												calendarWrapper: 'calendar-wrapper',
+											}}
+											editableDateInputs={true}
+											onChange={(item) => setDate([item.selection])}
+											ranges={date}
+										/>
+									</>
+								)}
+							</DateButton>
+						</Input>
+					</Filter>
+
+					<Rank>
+						<header>
+							<MdSegment color="#8B83BA" />
+							<span>Geral</span>
+						</header>
+						<div className="donut-wrapper">
+							<DonutChart
+								width="150%"
+								height={300}
+								series={donutSeries}
+								colors={['#28a745', 'lightgray']}
+								labels={['Meta alcançada', 'Meta restante']}
+								tooltipFormatter={(val) => {
+									return new Intl.NumberFormat('pt-BR', {
+										currency: 'BRL',
+										style: 'currency',
+									}).format(val)
+								}}
+							/>
+							<ul>
+								<li>
+									<b>Valor total:</b>{' '}
+									{new Intl.NumberFormat('pt-BR', {
+										style: 'currency',
+										currency: 'BRL',
+									}).format(donutSeries[0])}
+								</li>
+								<li>
+									<b>Diferença de meta:</b>{' '}
+									{new Intl.NumberFormat('pt-BR', {
+										style: 'currency',
+										currency: 'BRL',
+									}).format(donutSeries[0] - donutSeries[1])}
+								</li>
+								<li>
+									<b>Ticket médio:</b> R$ 1000,00
+								</li>
+							</ul>
+						</div>
+						{props.type !== 'vendedor' && (
+							<>
+								<header>
+									<FavoriteIcon />
+									<span>Rank</span>
+								</header>
+								<Chart
+									type="area"
+									series={data.rank.values}
+									height={350}
+									options={{
+										chart: {
+											width: '100%',
+											height: 350,
+											type: 'area',
+										},
+										colors: ['#405DF9', '#ED589D', '#3AACFF'],
+										dataLabels: {
+											enabled: false,
+										},
+										stroke: {
+											curve: 'smooth',
+										},
+										legend: {
+											fontFamily: 'Poppins',
+											fontWeight: 400,
+											fontSize: '12px',
+
+											labels: {
+												colors: '#25213B',
+											},
+										},
+										yaxis: {
+											labels: {
+												formatter: (value) => {
+													return Intl.NumberFormat('pt-BR', {
+														currency: 'BRL',
+														style: 'currency',
+													}).format(value)
+												},
+												style: {
+													fontFamily: 'Poppins',
+													fontWeight: 400,
+												},
+											},
+										},
+										labels: data.rank.dateRange?.map((value) =>
+											Temporal.Instant.from(value).toString()
+										),
+										xaxis: {
+											type: 'datetime',
+											labels: {
+												format: 'dd MMM',
+												style: {
+													fontFamily: 'Poppins',
+													fontWeight: 400,
+													colors: 'rgba(0, 0, 0, 0.85)',
+													fontSize: '12px',
+												},
+											},
+										},
+										fill: {
+											type: 'gradient',
+											gradient: {
+												shadeIntensity: 1,
+												opacityFrom: 0.7,
+												opacityTo: 0.9,
+												stops: [0, 100],
+											},
+										},
+										tooltip: {
+											x: {
+												format: 'dd/MM/yy HH:mm',
+											},
+											y: {
+												formatter: (value) => {
+													return Intl.NumberFormat('pt-BR', {
+														currency: 'BRL',
+														style: 'currency',
+													}).format(value)
+												},
+											},
+											style: {
+												fontFamily: 'Poppins',
+												fontSize: '12px',
+											},
+										},
+									}}
+								/>
+							</>
+						)}
+					</Rank>
+				</FiltersContainer>
+
+				<Table
+					data={data.tableData}
+					headerDirection="row"
+					pagination={{
+						enabled: true,
+					}}
+					{...tableConfig}
+				/>
+			</Main>
+		</Container>
+	)
+}
+
+export const getServerSideProps: GetServerSideProps = async (context) => {
+	const now = new Date()
+
+	const { data } = await api.get<GlobalInterfaces.MetaDataProps>(
+		'/api/meta-data',
+		{
+			params: {
+				type: context.query.type,
+				startDate: new Date(now.setMonth(now.getMonth() - 3)),
+				endDate: new Date(),
+			},
+		}
+	)
+
+	return {
+		props: { data, ...context.query },
+	}
+}
+
+export default Home
